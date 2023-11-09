@@ -134,6 +134,23 @@ enum radio_param_e {
   RADIO_PARAM_CHANNEL,
 
   /**
+   * The channel of the current input packet. This is only valid in the corresponding
+   * input callback function.
+   */
+  RADIO_PARAM_PKT_CHANNEL,
+
+  /**
+   * The channel to use for the folowing output.
+   */
+  RADIO_PARAM_TX_CHANNEL,
+
+  /**
+   * The callback function when there is an input.
+   */
+  RADIO_PARAM_INPUT_CALLBACK,
+
+
+  /**
    * The personal area network identifier (PAN ID), which is used by the h/w
    * frame filtering functionality of some radios.
    *

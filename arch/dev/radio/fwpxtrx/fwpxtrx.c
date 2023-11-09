@@ -149,7 +149,13 @@ signed char cc2420_last_rssi;
 uint8_t cc2420_last_correlation;
 
 static uint8_t receive_on;
-static int channel;
+
+static int tx_channel;
+static int pkt_channel;
+
+/* pointer to a function */
+
+static void (* input_callback)(void);
 
 /* Are we currently in poll mode? */
 static uint8_t volatile poll_mode = 0;
@@ -174,6 +180,9 @@ get_value(radio_param_t param, radio_value_t *value)
     return RADIO_RESULT_OK;
   case RADIO_PARAM_CHANNEL:
     *value = cc2420_get_channel();
+    return RADIO_RESULT_OK;
+  case RADIO_PARAM_PKT_CHANNEL:
+    *value = pkt_channel;
     return RADIO_RESULT_OK;
   case RADIO_PARAM_RX_MODE:
     *value = 0;
@@ -261,10 +270,12 @@ set_value(radio_param_t param, radio_value_t value)
     }
     return RADIO_RESULT_INVALID_VALUE;
   case RADIO_PARAM_CHANNEL:
+    return RADIO_RESULT_NOT_SUPPORTED;
+  case RADIO_PARAM_TX_CHANNEL:
     if(value < 11 || value > 26) {
       return RADIO_RESULT_INVALID_VALUE;
     }
-    cc2420_set_channel(value);
+    tx_channel = value;
     return RADIO_RESULT_OK;
   case RADIO_PARAM_RX_MODE:
     if(value & ~(RADIO_RX_MODE_ADDRESS_FILTER |
@@ -321,7 +332,16 @@ get_object(radio_param_t param, void *dest, size_t size)
 static radio_result_t
 set_object(radio_param_t param, const void *src, size_t size)
 {
-  return RADIO_RESULT_NOT_SUPPORTED;
+  switch (param) {
+  case RADIO_PARAM_INPUT_CALLBACK:
+    if(size != sizeof(void *) || !src) {
+      return RADIO_RESULT_INVALID_VALUE;
+    }
+    memcpy(&input_callback, src, size);
+    return RADIO_RESULT_OK;
+  default:
+    return RADIO_RESULT_NOT_SUPPORTED;
+  }
 }
 
 const struct radio_driver cc2420_driver =
@@ -760,7 +780,8 @@ cc2420_prepare(const void *payload, unsigned short payload_len)
   /* Write packet to TX FIFO. */
   strobe(CC2420_SFLUSHTX);
 
-  total_len = payload_len + CHECKSUM_LEN;
+  total_len = payload_len;
+  write_fifo_buf(&tx_channel, 1);
   write_fifo_buf(&total_len, 1);
   write_fifo_buf(payload, payload_len);
 
@@ -822,41 +843,6 @@ cc2420_on(void)
   return 1;
 }
 /*---------------------------------------------------------------------------*/
-int
-cc2420_get_channel(void)
-{
-  return channel;
-}
-/*---------------------------------------------------------------------------*/
-int
-cc2420_set_channel(int c)
-{
-  uint16_t f;
-
-  GET_LOCK();
-  /*
-   * Subtract the base channel (11), multiply by 5, which is the
-   * channel spacing. 357 is 2405-2048 and 0x4000 is LOCK_THR = 1.
-   */
-  channel = c;
-
-  f = 5 * (c - 11) + 357 + 0x4000;
-
-  /* Wait for any transmission to end. */
-  wait_for_transmission();
-
-  setreg(CC2420_FSCTRL, f);
-
-  /* If we are in receive mode, we issue an SRXON command to ensure
-     that the VCO is calibrated. */
-  if(receive_on) {
-    strobe(CC2420_SRXON);
-  }
-
-  RELEASE_LOCK();
-  return 1;
-}
-/*---------------------------------------------------------------------------*/
 void
 cc2420_set_pan_addr(unsigned pan,
                     unsigned addr,
@@ -903,7 +889,11 @@ PROCESS_THREAD(cc2420_process, ev, data)
 
     packetbuf_set_datalen(len);
 
-    NETSTACK_MAC.input();
+    if (input_callback) {
+      input_callback();
+    } else {
+      NETSTACK_MAC.input();
+    }
   }
 
   PROCESS_END();
@@ -912,8 +902,7 @@ PROCESS_THREAD(cc2420_process, ev, data)
 static int
 cc2420_read(void *buf, unsigned short bufsize)
 {
-  uint8_t footer[FOOTER_LEN];
-  uint8_t len;
+  uint8_t len, channel;
 
   if(!CC2420_FIFOP_IS_1) {
     return 0;
@@ -921,31 +910,16 @@ cc2420_read(void *buf, unsigned short bufsize)
 
   GET_LOCK();
 
+  getrxdata(&channel, 1);
   getrxdata(&len, 1);
 
   if(len > CC2420_MAX_PACKET_LEN) {
     /* Oops, we must be out of sync. */
-  } else if(len <= FOOTER_LEN) {
-    /* Packet too short */
-  } else if(len - FOOTER_LEN > bufsize) {
+  } else if(len > bufsize) {
     /* Packet too long */
   } else {
-    getrxdata((uint8_t *) buf, len - FOOTER_LEN);
-    getrxdata(footer, FOOTER_LEN);
-
-    if(footer[1] & FOOTER1_CRC_OK) {
-      cc2420_last_rssi = footer[0] + RSSI_OFFSET;
-      cc2420_last_correlation = footer[1] & FOOTER1_CORRELATION;
-      if(!poll_mode) {
-        /* Not in poll mode: packetbuf should not be accessed in interrupt context.
-         * In poll mode, the last packet RSSI and link quality can be obtained through
-         * RADIO_PARAM_LAST_RSSI and RADIO_PARAM_LAST_LINK_QUALITY */
-        packetbuf_set_attr(PACKETBUF_ATTR_RSSI, cc2420_last_rssi);
-        packetbuf_set_attr(PACKETBUF_ATTR_LINK_QUALITY, cc2420_last_correlation);
-      }
-    } else {
-      len = FOOTER_LEN;
-    }
+    pkt_channel = channel;
+    getrxdata((uint8_t *) buf, len);
 
     if(!poll_mode) {
       if(CC2420_FIFOP_IS_1) {
@@ -962,7 +936,7 @@ cc2420_read(void *buf, unsigned short bufsize)
     }
 
     RELEASE_LOCK();
-    return len - FOOTER_LEN;
+    return len;
   }
 
   flushrx();
