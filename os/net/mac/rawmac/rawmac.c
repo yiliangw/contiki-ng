@@ -91,7 +91,7 @@ init(void)
 }
 /*---------------------------------------------------------------------------*/
 const struct mac_driver rawmac_driver = {
-  "FramerMAC",
+  "RawMAC",
   init,
   send_packet,
   packet_input,
