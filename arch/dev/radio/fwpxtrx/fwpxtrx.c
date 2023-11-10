@@ -179,8 +179,7 @@ get_value(radio_param_t param, radio_value_t *value)
     }
     return RADIO_RESULT_OK;
   case RADIO_PARAM_CHANNEL:
-    *value = cc2420_get_channel();
-    return RADIO_RESULT_OK;
+    return RADIO_RESULT_NOT_SUPPORTED;
   case RADIO_PARAM_PKT_CHANNEL:
     *value = pkt_channel;
     return RADIO_RESULT_OK;
@@ -680,7 +679,7 @@ cc2420_init(void)
   init_security();
 
   cc2420_set_pan_addr(0xffff, 0x0000, NULL);
-  cc2420_set_channel(IEEE802154_DEFAULT_CHANNEL);
+  tx_channel = IEEE802154_DEFAULT_CHANNEL;
   cc2420_set_cca_threshold(CC2420_CONF_CCA_THRESH);
 
   flushrx();
@@ -765,6 +764,7 @@ static int
 cc2420_prepare(const void *payload, unsigned short payload_len)
 {
   uint8_t total_len;
+  uint8_t channel;
 
   if(payload_len > MAX_PAYLOAD_LEN) {
     return RADIO_TX_ERR;
@@ -781,7 +781,8 @@ cc2420_prepare(const void *payload, unsigned short payload_len)
   strobe(CC2420_SFLUSHTX);
 
   total_len = payload_len;
-  write_fifo_buf(&tx_channel, 1);
+  channel = tx_channel;
+  write_fifo_buf(&channel, 1);
   write_fifo_buf(&total_len, 1);
   write_fifo_buf(payload, payload_len);
 

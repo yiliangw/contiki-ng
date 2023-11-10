@@ -1,5 +1,5 @@
 ARCH=spi-legacy.c ds2411.c xmem.c i2c.c sensors.c \
-     cc2420.c cc2420-arch.c cc2420-arch-sfd.c \
+     fwpxtrx.c fwpxtrx-arch.c fwpxtrx-arch-sfd.c \
      sky-sensors.c uip-ipchksum.c \
      uart1.c slip_uart1.c uart1-putchar.c platform.c
 
@@ -61,56 +61,6 @@ else
     CMOTES=$(MOTES)
   endif
 endif
-
-motelist: sky-motelist
-
-sky-motelist:
-	$(MOTELIST)
-sky-motes:
-	@echo $(MOTES)
-
-ifdef MOTE
-%.upload: %.ihex
-	$(MAKE) IHEXFILE=$< sky-u.$(subst /,_,$(word $(MOTE), $(MOTES)))
-else # MOTE
-%.upload: %.ihex
-	$(MAKE) IHEXFILE=$< sky-reset sky-upload
-endif # MOTE
-
-upload-ihex:
-ifdef FILE
-	@echo Uploading $(FILE)
-ifdef MOTE
-	$(MAKE) IHEXFILE=$(FILE) sky-u.$(subst /,_,$(word $(MOTE), $(MOTES)))
-else # MOTE
-	$(MAKE) sky-reset sky-upload
-endif # MOTE
-else
-	@echo Example: $(MAKE) upload-ihex FILE=myfile.ihex
-endif
-
-sky-upload: sky-reset
-	$(MAKE) -j $(NUMPAR) sky-upload-sequence
-
-sky-upload-sequence:	$(foreach PORT, $(MOTES), sky-u.$(subst /,_,$(PORT)))
-	@echo Done
-
-sky-reset:
-	$(MAKE) -k -j $(NUMPAR) sky-reset-sequence
-
-sky-reset-sequence:	$(foreach PORT, $(MOTES), sky-r.$(subst /,_,$(PORT)))
-	@echo Done
-
-sky-u.%:
-	@echo +++++ Erasing $(subst _,/,$*); \
-	$(BSL) -c $(subst _,/,$*) -e && sleep 2 ; \
-	echo +++++ Programming $(subst _,/,$*) ; \
-	$(BSL) -c $(subst _,/,$*) $(BSL_FILETYPE) -p $(IHEXFILE) && sleep 2 ; \
-	echo +++++ Resetting $(subst _,/,$*) ; \
-	$(BSL) -c $(subst _,/,$*) -r
-
-sky-r.%:
-	$(BSL) -c $(subst _,/,$*) -r
 
 sizeplot:
 	msp430-size $(OBJECTDIR)/*.o | $(CONTIKI_NG_TOOLS_DIR)/sky/check-size > size-data

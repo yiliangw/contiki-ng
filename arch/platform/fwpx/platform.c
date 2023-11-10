@@ -32,7 +32,7 @@
 #include <string.h>
 #include "contiki.h"
 #include "sys/energest.h"
-#include "dev/radio/cc2420/cc2420.h"
+#include "dev/radio/fwpxtrx/fwpxtrx.h"
 #include "dev/etc/ds2411/ds2411.h"
 #include "dev/leds.h"
 #include "dev/serial-line.h"
