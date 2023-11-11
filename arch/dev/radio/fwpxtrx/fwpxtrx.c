@@ -40,8 +40,8 @@
 
 #include "dev/leds.h"
 #include "dev/spi-legacy.h"
-#include "dev/radio/cc2420/cc2420.h"
-#include "dev/radio/cc2420/cc2420_const.h"
+#include "dev/radio/fwpxtrx/fwpxtrx.h"
+#include "dev/radio/fwpxtrx/fwpxtrx_const.h"
 
 #include "net/packetbuf.h"
 #include "net/netstack.h"
@@ -102,8 +102,6 @@ volatile uint8_t cc2420_sfd_counter;
 volatile uint16_t cc2420_sfd_start_time;
 volatile uint16_t cc2420_sfd_end_time;
 
-static volatile uint16_t last_packet_timestamp;
-
 /*
  * The maximum number of bytes this driver can accept from the MAC layer for
  * transmission or will deliver to the MAC layer after reception. Includes
@@ -111,7 +109,7 @@ static volatile uint16_t last_packet_timestamp;
  */
 #define MAX_PAYLOAD_LEN (127 - CHECKSUM_LEN)
 /*---------------------------------------------------------------------------*/
-PROCESS(cc2420_process, "CC2420 driver");
+PROCESS(fwpxtrx_process, "fwpxtrx driver");
 /*---------------------------------------------------------------------------*/
 
 #define AUTOACK (1 << 4)
@@ -151,7 +149,10 @@ uint8_t cc2420_last_correlation;
 static uint8_t receive_on;
 
 static int tx_channel;
-static int pkt_channel;
+static int rx_channel;
+static int rx_opcode;
+static int rx_pkt_len;
+static int rx_num;
 
 /* pointer to a function */
 
@@ -180,8 +181,14 @@ get_value(radio_param_t param, radio_value_t *value)
     return RADIO_RESULT_OK;
   case RADIO_PARAM_CHANNEL:
     return RADIO_RESULT_NOT_SUPPORTED;
-  case RADIO_PARAM_PKT_CHANNEL:
-    *value = pkt_channel;
+  case RADIO_PARAM_RX_CHANNEL:
+    *value = rx_channel;
+    return RADIO_RESULT_OK;
+  case RADIO_PARAM_RX_OPCODE:
+    *value = rx_opcode;
+    return RADIO_RESULT_OK;
+  case RADIO_PARAM_RX_NUM:
+    *value = rx_num;
     return RADIO_RESULT_OK;
   case RADIO_PARAM_RX_MODE:
     *value = 0;
@@ -333,7 +340,7 @@ set_object(radio_param_t param, const void *src, size_t size)
 {
   switch (param) {
   case RADIO_PARAM_INPUT_CALLBACK:
-    if(size != sizeof(void *) || !src) {
+    if(size != sizeof(input_callback) || !src) {
       return RADIO_RESULT_INVALID_VALUE;
     }
     memcpy(&input_callback, src, size);
@@ -343,7 +350,7 @@ set_object(radio_param_t param, const void *src, size_t size)
   }
 }
 
-const struct radio_driver cc2420_driver =
+const struct radio_driver fwpxtrx_driver =
   {
     cc2420_init,
     cc2420_prepare,
@@ -494,14 +501,7 @@ getrxdata(uint8_t *buffer, int count)
 static void
 flushrx(void)
 {
-  uint8_t dummy;
-
-  getrxdata(&dummy, 1);
   strobe(CC2420_SFLUSHRX);
-  strobe(CC2420_SFLUSHRX);
-  if(dummy) {
-    /* avoid unused variable compiler warning */
-  }
 }
 /*---------------------------------------------------------------------------*/
 static void
@@ -686,78 +686,24 @@ cc2420_init(void)
 
   set_poll_mode(0);
 
-  process_start(&cc2420_process, NULL);
+  process_start(&fwpxtrx_process, NULL);
   return 1;
 }
 /*---------------------------------------------------------------------------*/
 static int
 cc2420_transmit(unsigned short payload_len)
 {
-  int i;
-
   if(payload_len > MAX_PAYLOAD_LEN) {
     return RADIO_TX_ERR;
   }
 
   GET_LOCK();
 
-  /* The TX FIFO can only hold one packet. Make sure to not overrun
-   * FIFO by waiting for transmission to start here and synchronizing
-   * with the CC2420_TX_ACTIVE check in cc2420_send.
-   *
-   * Note that we may have to wait up to 320 us (20 symbols) before
-   * transmission starts.
-   */
-#ifndef CC2420_CONF_SYMBOL_LOOP_COUNT
-#error CC2420_CONF_SYMBOL_LOOP_COUNT needs to be set!!!
-#else
-#define LOOP_20_SYMBOLS CC2420_CONF_SYMBOL_LOOP_COUNT
-#endif
-
-  if(send_on_cca) {
-    strobe(CC2420_SRXON);
-    wait_for_status(BV(CC2420_RSSI_VALID));
-    strobe(CC2420_STXONCCA);
-  } else {
-    strobe(CC2420_STXON);
-  }
-  for(i = LOOP_20_SYMBOLS; i > 0; i--) {
-    if(CC2420_SFD_IS_1) {
-      if(!(get_status() & BV(CC2420_TX_ACTIVE))) {
-        /* SFD went high but we are not transmitting. This means that
-           we just started receiving a packet, so we drop the
-           transmission. */
-        RELEASE_LOCK();
-        return RADIO_TX_COLLISION;
-      }
-      if(receive_on) {
-	ENERGEST_OFF(ENERGEST_TYPE_LISTEN);
-      }
-      ENERGEST_ON(ENERGEST_TYPE_TRANSMIT);
-      /* We wait until transmission has ended so that we get an
-	 accurate measurement of the transmission time.*/
-      wait_for_transmission();
-
-      ENERGEST_OFF(ENERGEST_TYPE_TRANSMIT);
-      if(receive_on) {
-	ENERGEST_ON(ENERGEST_TYPE_LISTEN);
-      } else {
-	/* We need to explicitly turn off the radio,
-	 * since STXON[CCA] -> TX_ACTIVE -> RX_ACTIVE */
-	off();
-      }
-
-      RELEASE_LOCK();
-      return RADIO_TX_OK;
-    }
-  }
-
-  /* If we send with cca (cca_on_send), we get here if the packet wasn't
-     transmitted because of other channel activity. */
-  PRINTF("cc2420: do_send() transmission never started\n");
-
+  strobe(CC2420_STXON);
+  
   RELEASE_LOCK();
-  return RADIO_TX_COLLISION;
+
+  return RADIO_TX_OK;
 }
 /*---------------------------------------------------------------------------*/
 static int
@@ -867,13 +813,12 @@ int
 cc2420_interrupt(void)
 {
   CC2420_CLEAR_FIFOP_INT();
-  process_poll(&cc2420_process);
+  process_poll(&fwpxtrx_process);
 
-  last_packet_timestamp = cc2420_sfd_start_time;
   return 1;
 }
 /*---------------------------------------------------------------------------*/
-PROCESS_THREAD(cc2420_process, ev, data)
+PROCESS_THREAD(fwpxtrx_process, ev, data)
 {
   int len;
   PROCESS_BEGIN();
@@ -903,7 +848,7 @@ PROCESS_THREAD(cc2420_process, ev, data)
 static int
 cc2420_read(void *buf, unsigned short bufsize)
 {
-  uint8_t len, channel;
+  uint8_t opcode, channel;
 
   if(!CC2420_FIFOP_IS_1) {
     return 0;
@@ -911,38 +856,39 @@ cc2420_read(void *buf, unsigned short bufsize)
 
   GET_LOCK();
 
+  getrxdata(&opcode, 1);
   getrxdata(&channel, 1);
-  getrxdata(&len, 1);
 
-  if(len > CC2420_MAX_PACKET_LEN) {
-    /* Oops, we must be out of sync. */
-  } else if(len > bufsize) {
-    /* Packet too long */
-  } else {
-    pkt_channel = channel;
-    getrxdata((uint8_t *) buf, len);
+  rx_opcode = opcode;
+  rx_channel = channel;
+  rx_pkt_len = 0;
 
-    if(!poll_mode) {
-      if(CC2420_FIFOP_IS_1) {
-        if(!CC2420_FIFO_IS_1) {
-          /* Clean up in case of FIFO overflow!  This happens for every
-           * full length frame and is signaled by FIFOP = 1 and FIFO =
-           * 0. */
-          flushrx();
-        } else {
-          /* Another packet has been received and needs attention. */
-          process_poll(&cc2420_process);
-        }
+  switch(opcode) {
+    case RADIO_RX_OPCODE_PKT: {
+      uint8_t len;
+      getrxdata(&len, 1);
+      if(len > CC2420_MAX_PACKET_LEN || len > bufsize) {
+        /* Packet too long */
+      } else {
+        rx_pkt_len = len;
+        getrxdata(buf, len);        
       }
     }
-
-    RELEASE_LOCK();
-    return len;
+    break;
+    case RADIO_RX_OPCODE_PKTNUM: {
+      uint8_t num;
+      getrxdata(&num, 1);
+      rx_num = num;
+    }
+    break;
+    default:
+      PRINTF("Unknown RX opcode\n");
   }
 
-  flushrx();
+  PRINTF("cc2420_read: opcode %d channel %d\n", opcode, channel);
+
   RELEASE_LOCK();
-  return 0;
+  return rx_pkt_len;
 }
 /*---------------------------------------------------------------------------*/
 void

@@ -45,7 +45,7 @@
 #include "contiki.h"
 #include "dev/spi-legacy.h"
 #include "dev/radio.h"
-#include "dev/radio/cc2420/cc2420_const.h"
+#include "dev/radio/fwpxtrx/fwpxtrx_const.h"
 #include "lib/aes-128.h"
 
 #define WITH_SEND_CCA 1
@@ -86,7 +86,7 @@ extern uint8_t cc2420_last_correlation;
 
 int cc2420_rssi(void);
 
-extern const struct radio_driver cc2420_driver;
+extern const struct radio_driver fwpxtrx_driver;
 
 /**
  * \param power Between 1 and 31.

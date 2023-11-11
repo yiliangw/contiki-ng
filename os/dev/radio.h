@@ -134,15 +134,25 @@ enum radio_param_e {
   RADIO_PARAM_CHANNEL,
 
   /**
-   * The channel of the current input packet. This is only valid in the corresponding
+   * The channel of the current input. This is only valid in the corresponding
    * input callback function.
    */
-  RADIO_PARAM_PKT_CHANNEL,
+  RADIO_PARAM_RX_CHANNEL,
 
   /**
    * The channel to use for the folowing output.
    */
   RADIO_PARAM_TX_CHANNEL,
+
+  /**
+   * The opcode of the current input.
+   */
+  RADIO_PARAM_RX_OPCODE,
+
+  /**
+   * The number of detected concurrent rx. 
+   */
+  RADIO_PARAM_RX_NUM,
 
   /**
    * The callback function when there is an input.
@@ -533,6 +543,19 @@ enum radio_tx_e {
   RADIO_TX_NOACK,
 };
 /*---------------------------------------------------------------------------*/
+enum radio_rx_opcode {
+  /**
+   * The packet that holds decoded data.
+   */
+  RADIO_RX_OPCODE_PKT,
+
+  /**
+   * The number of detected number of unrecoverable collided pakcets. 
+   */
+  RADIO_RX_OPCODE_PKTNUM,
+};
+
+
 /**
  * \name The Contiki-NG RF driver API
  * @{
