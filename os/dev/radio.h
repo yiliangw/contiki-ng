@@ -544,6 +544,7 @@ enum radio_tx_e {
 };
 /*---------------------------------------------------------------------------*/
 enum radio_rx_opcode {
+  RADIO_RX_OPCODE_NULL = 0,
   /**
    * The packet that holds decoded data.
    */

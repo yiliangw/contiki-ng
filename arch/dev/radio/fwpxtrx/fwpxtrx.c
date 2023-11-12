@@ -854,14 +854,18 @@ cc2420_read(void *buf, unsigned short bufsize)
     return 0;
   }
 
+  rx_pkt_len = 0;
   GET_LOCK();
 
   getrxdata(&opcode, 1);
-  getrxdata(&channel, 1);
-
+  if (opcode == RADIO_RX_OPCODE_NULL) {
+    RELEASE_LOCK();
+    return 0;
+  }
   rx_opcode = opcode;
+
+  getrxdata(&channel, 1);
   rx_channel = channel;
-  rx_pkt_len = 0;
 
   switch(opcode) {
     case RADIO_RX_OPCODE_PKT: {
